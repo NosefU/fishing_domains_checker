@@ -4,14 +4,13 @@ from argparse import ArgumentParser
 from asyncio import exceptions
 from copy import deepcopy
 from itertools import chain
-from typing import List, Type
+from typing import Iterable
 
 from async_dns import Address
 from async_dns.core import types
 from async_dns.resolver import DNSClient
 
 from fishing_hosts_generator import FishingDomainsGenerator
-from mutators import AbstractMutator
 from mutators.delete_char_mutator import DeleteCharMutator
 from mutators.homoglyph_mutator import HomoglyphMutator
 from mutators.last_char_mutator import LastCharMutator
@@ -39,27 +38,18 @@ async def check_domain(domain):
     return result
 
 
-def check_fishing(keywords: List[str], mutators: List[Type[AbstractMutator]], domain_zones: List[str]):
-    logger.info('Generating fishing domains')
-    # собираем все фишинговы домены для всех ключевых слов в один генератор
-    fishing_domains = chain.from_iterable(
-        [FishingDomainsGenerator(keyword, mutators, domain_zones) for keyword in keywords]
-    )
-    logger.info('Total domains: %s', len(list(deepcopy(fishing_domains))))
+def bulk_check_domains(domains: Iterable[str]):
+    logger.info('Total domains: %s', len(list(deepcopy(domains))))
     logger.info('Resolving domains')
     # асинхронная проверка всех созданных доменных имён
     loop = asyncio.get_event_loop()
-    coros = [check_domain(host) for host in fishing_domains]
+    coros = [check_domain(host) for host in domains]
     tasks = asyncio.gather(*coros)
     results = loop.run_until_complete(tasks)
 
     valid_domains = [result for result in results if result['IP']]
     logger.info('Valid domains: %s', len(valid_domains))
-    print(
-        *[f"{record['domain']} {' '.join(record['IP'])}" for record in valid_domains],
-        sep='\n'
-    )
-    return results
+    return valid_domains
 
 
 if __name__ == '__main__':
@@ -75,5 +65,16 @@ if __name__ == '__main__':
     keywords = args.keywords
     domain_zones = args.domain_zones
     mutators = [LastCharMutator, HomoglyphMutator, ThirdLevelDomainMutator, DeleteCharMutator]
+    logger.info('Generating fishing domains')
 
-    check_fishing(keywords, mutators, domain_zones)
+    # собираем все фишинговы домены для всех ключевых слов в один генератор
+    domains = chain.from_iterable(
+        [FishingDomainsGenerator(keyword, mutators, domain_zones) for keyword in keywords]
+    )
+    # валидируем домены
+    valid_domains = bulk_check_domains(domains)
+
+    print(
+        *[f"{record['domain']} {' '.join(record['IP'])}" for record in valid_domains],
+        sep='\n'
+    )
